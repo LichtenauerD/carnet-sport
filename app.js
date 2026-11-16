@@ -19,7 +19,7 @@
    ========================================================= */
 'use strict';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const CLE_DB = 'carnetSport.db';
 const CLE_CONF = 'carnetSport.conf';
 
@@ -78,7 +78,7 @@ function charger(cle, defaut) {
   catch (e) { return defaut; }
 }
 let DB = charger(CLE_DB, { v: 1, seances: [], exosPerso: [], prisesPerso: {}, formesPerso: {}, maj: 0 });
-const CONF = charger(CLE_CONF, { proprio: 'LichtenauerD', depot: 'carnet-sport-donnees', jeton: '', repos: 90, derniereSync: 0 });
+const CONF = charger(CLE_CONF, { proprio: 'LichtenauerD', depot: 'carnet-sport-donnees', jeton: '', repos: 90, saisie: 'simple', derniereSync: 0 });
 
 function sauverConf() { localStorage.setItem(CLE_CONF, JSON.stringify(CONF)); }
 function sauver(sync = true) {
@@ -159,6 +159,14 @@ const txtSerie = m => m.kg > 0 ? `${fmtNum(m.kg)} kg × ${m.r}` : `${m.r} reps`;
 const resumeSeries = e => e.series.filter(se => se.r !== '' || se.kg !== '')
   .map(se => (se.kg !== '' ? fmtNum(num(se.kg)) : '0') + '×' + (se.r || '?')).join(' · ');
 
+/** Résumé de la dernière fois : « 4 séries de 10 reps à 24 kg » ou le détail série par série */
+function resumeRappel(e) {
+  const p = e.series.filter(se => se.r !== '' || se.kg !== '');
+  if (!p.length) return '';
+  const txt = se => `${se.r || '?'} reps à ${se.kg !== '' ? fmtNum(num(se.kg)) : '0'} kg`;
+  if (p.every(se => se.r === p[0].r && se.kg === p[0].kg)) return `${p.length} série${p.length > 1 ? 's' : ''} de ${txt(p[0])}`;
+  return p.map(se => `${se.r || '?'}×${se.kg !== '' ? fmtNum(num(se.kg)) : '0'}`).join(', ') + ' (reps×kg)';
+}
 /** Points de progression par exercice suivi */
 function pointsParCle(filtreType) {
   const m = new Map();
@@ -249,7 +257,7 @@ function commencer(type) {
   const prev = derniereDuType(type);
   const s = { id: uid(), cree: Date.now(), maj: Date.now(), date, heure, type, statut: 'en_cours', sansDetail: false, exos: [], cardio: [], note: '' };
   if (prev) s.exos = prev.exos.map(e => ({
-    uid: uid(), ex: e.ex, forme: e.forme, prise: e.prise, note: '',
+    uid: uid(), ex: e.ex, forme: e.forme, prise: e.prise, note: '', mode: e.mode || CONF.saisie,
     series: Array.from({ length: Math.max(1, e.series.length) }, () => ({ r: '', kg: '' }))
   }));
   DB.seances.push(s); sauver(); rendre(); window.scrollTo(0, 0);
@@ -276,14 +284,39 @@ function selectOptions(liste, sel, avecVide) {
   o += liste.map(v => `<option value="${esc(v)}"${v === sel ? ' selected' : ''}>${esc(v)}</option>`).join('');
   return o + '<option value="__autre">+ Autre…</option>';
 }
+/** Saisie « simple » : une ligne recopiée sur toutes les séries. « detail » : série par série */
+const modeSaisie = e => e.mode || CONF.saisie || 'simple';
+/** Valeur de référence pour la ligne unique : la série la plus fréquente de la dernière fois */
+function serieType(e) {
+  const pleines = e.series.filter(se => se.r !== '' || se.kg !== '');
+  if (!pleines.length) return null;
+  const compte = new Map();
+  for (const se of pleines) { const k = se.r + '|' + se.kg; compte.set(k, (compte.get(k) || 0) + 1); }
+  const [k] = [...compte.entries()].sort((a, b) => b[1] - a[1])[0];
+  const [r, kg] = k.split('|');
+  return { r, kg };
+}
+function ligneSimple(e, pc, pdc) {
+  const v = e.series[0] || { r: '', kg: '' };
+  const g = pc ? serieType(pc.e) : null;
+  const phR = g && g.r !== '' ? g.r : 'reps';
+  const phK = g && g.kg !== '' ? g.kg : (pdc ? '0' : 'kg');
+  return `<tr><td class="num" style="width:auto"><div class="pas">
+      <button class="pas-btn" data-a="moins-serie" aria-label="Une série de moins">−</button>
+      <b>${e.series.length}</b>
+      <button class="pas-btn" data-a="plus-serie" aria-label="Une série de plus">+</button></div></td>
+    <td><input inputmode="numeric" data-simple="r" value="${esc(v.r)}" placeholder="${esc(phR)}" class="${v.r !== '' ? 'rempli' : ''}" aria-label="Répétitions par série"></td>
+    <td><input inputmode="decimal" data-simple="kg" value="${esc(v.kg)}" placeholder="${esc(phK)}" class="${v.kg !== '' ? 'rempli' : ''}" aria-label="Charge"></td></tr>`;
+}
 function exoHTML(s, e, i) {
   const d = exo(e.ex), pc = precedent(s, e);
   const pdc = e.forme === 'Poids du corps';
   const rang = i + 1;
   const rappel = pc
-    ? `<div class="rappel">Dernière fois, ${dateFR(pc.s.date)} : exercice fait en <b>${ordinal(pc.rang)}</b>${pc.rang !== rang ? `, aujourd'hui en ${ordinal(rang)}` : ''}</div>`
+    ? `<div class="rappel">Dernière fois, ${dateFR(pc.s.date)} : exercice fait en <b>${ordinal(pc.rang)}</b>${pc.rang !== rang ? `, aujourd'hui en ${ordinal(rang)}` : ''}<br>${esc(resumeRappel(pc.e))}</div>`
     : `<div class="rappel nouveau">Première fois avec cette forme et cette prise</div>`;
-  const lignes = e.series.map((se, k) => {
+  const simple = modeSaisie(e) === 'simple';
+  const lignes = simple ? ligneSimple(e, pc, pdc) : e.series.map((se, k) => {
     const g = pc ? (pc.e.series[k] || pc.e.series[pc.e.series.length - 1]) : null;
     const phR = g && g.r !== '' ? g.r : 'reps';
     const phK = g && g.kg !== '' ? g.kg : (pdc ? '0' : 'kg');
@@ -306,10 +339,11 @@ function exoHTML(s, e, i) {
         <label><span>Prise / position</span><select data-sel="prise">${selectOptions(uniq([...prisesDe(e.ex), e.prise]), e.prise, true)}</select></label>
       </div>
       ${rappel}
-      <table class="series"><thead><tr><th></th><th>Reps</th><th>${pdc ? 'Lest (kg)' : 'Charge (kg)'}</th></tr></thead><tbody>${lignes}</tbody></table>
+      <table class="series"><thead><tr><th>${simple ? 'Séries' : ''}</th><th>Reps</th><th>${pdc ? 'Lest (kg)' : 'Charge (kg)'}</th></tr></thead><tbody>${lignes}</tbody></table>
       <div class="exo-actions">
-        <button class="btn fin" data-a="moins-serie">− Série</button>
-        <button class="btn fin" data-a="plus-serie">+ Série</button>
+        ${simple ? '' : `<button class="btn fin" data-a="moins-serie">− Série</button>
+        <button class="btn fin" data-a="plus-serie">+ Série</button>`}
+        <button class="btn fin" data-a="mode-saisie">${simple ? 'Détailler les séries' : 'Une seule ligne'}</button>
         <span class="espace"></span>
         <button class="btn fin" data-a="note-exo">${ICO.note} Note</button>
       </div>
@@ -512,6 +546,7 @@ function validerVariante() {
     const pc = precedent(s, nouv);
     const n = pc ? Math.max(1, pc.e.series.length) : 4;
     nouv.series = Array.from({ length: n }, () => ({ r: '', kg: '' }));
+    nouv.mode = pc?.e.mode || CONF.saisie;
     s.exos.push(nouv); cible = nouv;
   }
   toucher(s); sauver(); fermerFeuille(); rendreListe();
@@ -849,6 +884,13 @@ function vueReglages() {
       <input type="file" id="imp-fichier" accept=".json,application/json" class="cache">
     </div>
 
+    <div class="titre-section">Saisie des séries</div>
+    <div class="carte">
+      <div class="muet petit" style="margin-bottom:8px">Pour un nouvel exercice. Chaque exercice garde ensuite le mode choisi la dernière fois.</div>
+      <div class="puces">${[['simple', 'Une seule ligne'], ['detail', 'Série par série']].map(([v, l]) =>
+        `<button class="puce${(CONF.saisie || 'simple') === v ? ' on' : ''}" data-a="cf-saisie" data-v="${v}">${l}</button>`).join('')}</div>
+    </div>
+
     <div class="titre-section">Minuteur</div>
     <div class="carte">
       <div class="muet petit" style="margin-bottom:8px">Durée proposée par défaut</div>
@@ -1006,11 +1048,27 @@ const ACTIONS = {
     if (aDesValeurs(e) && !confirm(`Retirer « ${exo(e.ex).nom} » de la séance ?`)) return;
     s.exos = s.exos.filter(x => x !== e); toucher(s); sauver(); rendreListe();
   },
-  'plus-serie': b => { const { s, e } = exoDe(b); e.series.push({ r: '', kg: '' }); toucher(s); sauver(); rendreCarte(e.uid); },
+  'plus-serie': b => {
+    const { s, e } = exoDe(b);
+    const modele = modeSaisie(e) === 'simple' && e.series[0] ? { ...e.series[0] } : { r: '', kg: '' };
+    e.series.push(modele); toucher(s); sauver(); rendreCarte(e.uid);
+  },
+  'mode-saisie': b => {
+    const { s, e } = exoDe(b);
+    if (modeSaisie(e) === 'simple') e.mode = 'detail';
+    else {
+      const t = serieType(e) || { r: '', kg: '' };
+      const differentes = e.series.some(se => (se.r !== '' || se.kg !== '') && (se.r !== t.r || se.kg !== t.kg));
+      if (differentes && !confirm(`Les séries ont des valeurs différentes. Les remplacer toutes par ${t.r || '?'} reps × ${t.kg || '?'} kg ?`)) return;
+      e.series = e.series.map(() => ({ ...t }));
+      e.mode = 'simple';
+    }
+    toucher(s); sauver(); rendreCarte(e.uid);
+  },
   'moins-serie': b => {
     const { s, e } = exoDe(b); if (e.series.length <= 1) return;
     const der = e.series[e.series.length - 1];
-    if ((der.r !== '' || der.kg !== '') && !confirm('La dernière série contient des valeurs. La retirer ?')) return;
+    if (modeSaisie(e) !== 'simple' && (der.r !== '' || der.kg !== '') && !confirm('La dernière série contient des valeurs. La retirer ?')) return;
     e.series.pop(); toucher(s); sauver(); rendreCarte(e.uid);
   },
   'note-exo': b => {
@@ -1080,6 +1138,7 @@ const ACTIONS = {
   'copie': () => exporterCopie(),
   'importer': () => $('#imp-fichier').click(),
   'cf-tester': () => testerConfig(),
+  'cf-saisie': b => { CONF.saisie = b.dataset.v; sauverConf(); rendre(); },
   'cf-repos': b => { CONF.repos = +b.dataset.v; MIN.duree = CONF.repos; sauverConf(); rendre(); },
   'sync': () => synchroniser(true),
   'suppr-perso': b => {
@@ -1109,6 +1168,14 @@ document.addEventListener('input', ev => {
     const v = t.value.replace(/[^\d.,]/g, '');
     if (v !== t.value) t.value = v;
     e.series[+t.dataset.serie][t.dataset.f] = v;
+    t.classList.toggle('rempli', v !== '');
+    toucher(s); sauverDiff(); return;
+  }
+  if (t.dataset.simple && s) {
+    const { e } = exoDe(t); if (!e) return;
+    const v = t.value.replace(/[^\d.,]/g, '');
+    if (v !== t.value) t.value = v;
+    e.series.forEach(se => { se[t.dataset.simple] = v; });
     t.classList.toggle('rempli', v !== '');
     toucher(s); sauverDiff(); return;
   }

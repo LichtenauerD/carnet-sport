@@ -1,6 +1,6 @@
 /* Carnet de sport : fonctionnement hors ligne.
    Changer VERSION à chaque mise à jour des fichiers pour forcer le rafraîchissement. */
-const VERSION = 'carnet-sport-1.0.0';
+const VERSION = 'carnet-sport-1.1.0';
 const FICHIERS = ['./', 'index.html', 'style.css', 'app.js', 'catalogue.js', 'mannequin.js', 'manifest.webmanifest', 'icone-180.png', 'icone-192.png', 'icone-512.png'];
 
 self.addEventListener('install', e => {

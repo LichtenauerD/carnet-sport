@@ -319,3 +319,11 @@ table.tab td { padding: 8px 4px; border-top: 1px solid var(--trait); vertical-al
   z-index: 80; transition: transform .25s, opacity .25s; opacity: 0; pointer-events: none; max-width: 90vw; width: max-content; text-align: center;
 }
 .toast.vu { transform: translate(-50%, 0); opacity: 1; }
+
+/* ---------- saisie sur une seule ligne ---------- */
+.pas { display: flex; align-items: center; gap: 4px; height: 44px; }
+.pas b { min-width: 22px; text-align: center; font-size: 18px; color: var(--texte); }
+.pas-btn {
+  width: 32px; height: 36px; border-radius: 10px; background: var(--carte2); font-size: 20px; font-weight: 700; color: var(--texte);
+}
+.pas-btn:active { transform: scale(.95); }
